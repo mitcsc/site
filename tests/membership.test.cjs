@@ -21,7 +21,7 @@ const { keys } = require('../src/lib/membership/keys.ts');
 const store = require('../src/lib/membership/store.ts');
 const { withLock } = require('../src/lib/membership/redis.ts');
 const hours = require('../src/lib/membership/event-times.ts');
-const { walletButtons, walletAvailable, walletPausedUntil, memberPass, walletLog, cancelMemberPass } = require('../src/lib/membership/wallet.ts');
+const { walletButtons, walletAvailable, walletPausedUntil, memberPass, walletCards, cancelledCards, cancelMemberPass } = require('../src/lib/membership/wallet.ts');
 const { renameFile, trashFile } = require('../src/lib/membership/google/drive.ts');
 const { redeemCardLink } = require('../src/lib/membership/card-link.ts');
 
@@ -434,21 +434,18 @@ test('two requests for the same new Wallet card make one card', async () => {
     await store.claimMember(member('jchen'));
     walletReplies.push({ status: 200, body: { serialNumber: 'one', shareUrl: 'https://example.invalid/s', googleSaveUrl: 'https://pay.google.com/one', applePass: Buffer.from('pkpass').toString('base64') } });
     const jamie = await store.getMember(YEAR, 'jchen');
-    const [first, second] = await Promise.all([memberPass(config, jamie, 'https://csc.mit.edu', 'apple'), memberPass(config, jamie, 'https://csc.mit.edu', 'google')]);
+    const [first, second] = await Promise.all([memberPass(config, jamie, 'https://csc.mit.edu'), memberPass(config, jamie, 'https://csc.mit.edu')]);
     assert.deepEqual(walletCalls, ['POST /api/passes'], 'WalletWallet made one card');
     assert.equal(first.google, 'https://pay.google.com/one');
     assert.equal(second.google, 'https://pay.google.com/one');
     assert.equal((await store.getMember(YEAR, 'jchen')).wallet.serial, 'one');
-    const log = await walletLog();
-    assert.equal(log.length, 1, 'One card change is logged');
-    assert.equal(log[0].kerb, 'jchen');
-    assert.equal(log[0].action, 'made');
+    assert.deepEqual(await cancelledCards(), [], 'A new card cancels nothing');
   } finally {
     delete process.env.WALLETWALLET_API_KEY;
   }
 });
 
-test('the Wallet log lists made, remade, and cancelled cards, newest first', async () => {
+test('cancelled Wallet cards are listed, newest first, and a failed cancel is not', async () => {
   process.env.WALLETWALLET_API_KEY = 'test-wallet-key';
   try {
     const config = newYearConfig(YEAR, null);
@@ -456,15 +453,36 @@ test('the Wallet log lists made, remade, and cancelled cards, newest first', asy
     await store.claimMember(member('amy', { wallet: { serial: 'old', shareUrl: 'u', googleUrl: 'https://pay.google.com/old' } }));
     walletReplies.push({ status: 200, body: { serialNumber: 'new', shareUrl: 'u', googleSaveUrl: 'https://pay.google.com/new', applePass: Buffer.from('pkpass').toString('base64') } });
     walletReplies.push({ status: 200, body: {} });
-    await memberPass(config, await store.getMember(YEAR, 'amy'), 'https://csc.mit.edu', 'google');
+    await memberPass(config, await store.getMember(YEAR, 'amy'), 'https://csc.mit.edu');
     assert.deepEqual(walletCalls, ['POST /api/passes', 'DELETE /api/passes/old']);
     walletReplies.push({ status: 200, body: {} });
     await cancelMemberPass(await store.getMember(YEAR, 'amy'), 'exec@mit.edu');
     walletReplies.push({ status: 500, body: {} });
     await assert.rejects(cancelMemberPass(await store.getMember(YEAR, 'amy'), 'exec@mit.edu'), /unavailable/);
-    const log = await walletLog();
-    assert.deepEqual(log.map((e) => [e.action, e.platform ?? e.by]), [['cancelled', 'exec@mit.edu'], ['remade', 'google']], 'A failed cancel is not logged');
-    assert.ok(log.every((e) => e.kerb === 'amy' && e.name && e.at > 0));
+    const cancelled = await cancelledCards();
+    assert.deepEqual(cancelled.map((c) => c.by ?? 'replaced'), ['exec@mit.edu', 'replaced']);
+    assert.ok(cancelled.every((c) => c.kerb === 'amy' && c.name && c.at > 0));
+    // Rows from when the list also held made cards are left out.
+    db.get(keys.walletLog).push(JSON.stringify({ at: 1, kerb: 'lin', name: 'Lin', action: 'made', platform: 'apple' }));
+    assert.equal((await cancelledCards()).length, 2);
+  } finally {
+    delete process.env.WALLETWALLET_API_KEY;
+  }
+});
+
+test('the card list reads every page of WalletWallet passes, newest first', async () => {
+  process.env.WALLETWALLET_API_KEY = 'test-wallet-key';
+  try {
+    const pass = (i) => ({ serialNumber: `s${i}`, detail: `Member ${i}`, createdAt: new Date(Date.UTC(2026, 9, 1) + i * 60_000).toISOString(), appleDevices: i % 3, googleSaved: i === 7 });
+    walletReplies.push({ status: 200, body: { passes: Array.from({ length: 100 }, (_, i) => pass(i)), total: 150, limit: 100, offset: 0 } });
+    walletReplies.push({ status: 200, body: { passes: Array.from({ length: 50 }, (_, i) => pass(100 + i)), total: 150, limit: 100, offset: 100 } });
+    const cards = await walletCards();
+    assert.deepEqual(walletCalls, ['GET /api/passes', 'GET /api/passes']);
+    assert.equal(cards.length, 150);
+    assert.equal(cards[0].serial, 's149', 'Newest first');
+    assert.deepEqual(cards.find((c) => c.serial === 's7'), { serial: 's7', name: 'Member 7', createdAt: Date.parse(pass(7).createdAt), appleDevices: 1, googleSaved: true });
+    walletReplies.push({ status: 500, body: {} });
+    assert.equal(await walletCards(), null, 'Unreachable WalletWallet gives null');
   } finally {
     delete process.env.WALLETWALLET_API_KEY;
   }
@@ -476,15 +494,15 @@ test('a used-up WalletWallet month hides new Wallet cards until the reset day', 
     const config = newYearConfig(YEAR, null);
     assert.equal(await walletAvailable(), true);
     walletReplies.push({ status: 429, body: { error: 'Rate limit exceeded', resetDate: '2999-01-01', message: 'Monthly limit reached. Resets on 2999-01-01' } });
-    await assert.rejects(memberPass(config, member('jchen'), 'https://csc.mit.edu', 'apple'), /unavailable/);
+    await assert.rejects(memberPass(config, member('jchen'), 'https://csc.mit.edu'), /unavailable/);
     assert.equal(await walletPausedUntil(), '2999-01-01');
     assert.equal(await walletAvailable(), false);
 
     // While paused, nothing asks WalletWallet again, but a card made before still opens.
     const calls = walletCalls.length;
-    await assert.rejects(memberPass(config, member('amy'), 'https://csc.mit.edu', 'apple'), /unavailable/);
+    await assert.rejects(memberPass(config, member('amy'), 'https://csc.mit.edu'), /unavailable/);
     db.set(keys.walletPass(YEAR, 'lin'), Buffer.from('pkpass').toString('base64'));
-    const made = await memberPass(config, member('lin', { wallet: { serial: 's', shareUrl: 'u', googleUrl: 'https://pay.google.com/save' } }), 'https://csc.mit.edu', 'apple');
+    const made = await memberPass(config, member('lin', { wallet: { serial: 's', shareUrl: 'u', googleUrl: 'https://pay.google.com/save' } }), 'https://csc.mit.edu');
     assert.equal(made.apple.toString(), 'pkpass');
     assert.equal(walletCalls.length, calls);
 

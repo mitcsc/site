@@ -97,36 +97,65 @@ async function createPass(config: YearConfig, member: Member, siteOrigin: string
   return { wallet: { serial: pass.serialNumber, shareUrl: pass.shareUrl, googleUrl: pass.googleSaveUrl }, applePass: pass.applePass };
 }
 
-// The latest card changes, newest first, for Dashboard > Settings. Each one counts toward the monthly limit.
-// "remade" replaced an older card: the new card and the cancelled old one count as two.
-export interface WalletEvent {
+// A card WalletWallet still has, from its pass list. Cancelled cards drop off that list.
+export interface WalletCard {
+  serial: string;
+  name: string;
+  createdAt: number;
+  // How many Apple devices have the card in Wallet.
+  appleDevices: number;
+  googleSaved: boolean;
+}
+
+const PAGE = 100;
+
+type PassPage = { passes: { serialNumber: string; detail: string; createdAt: string; appleDevices?: number; googleSaved?: boolean }[]; total: number };
+
+// Every card, newest first. Null when WalletWallet can't be reached. Reading the list does not count toward the limit.
+export async function walletCards(): Promise<WalletCard[] | null> {
+  if (!walletEnabled()) return null;
+  const page = (offset: number) => call<PassPage>(`${API}?limit=${PAGE}&offset=${offset}`, { method: "GET", signal: AbortSignal.timeout(8000) });
+  try {
+    const first = await page(0);
+    const offsets = Array.from({ length: Math.ceil(first.total / PAGE) - 1 }, (_, i) => (i + 1) * PAGE);
+    const pages = [first, ...(await Promise.all(offsets.map(page)))];
+    return pages.flatMap((p) => p.passes).map((p) => ({
+      serial: p.serialNumber, name: p.detail, createdAt: Date.parse(p.createdAt), appleDevices: p.appleDevices ?? 0, googleSaved: !!p.googleSaved,
+    })).sort((a, b) => b.createdAt - a.createdAt);
+  } catch {
+    return null;
+  }
+}
+
+// Cancelled cards, newest first, because WalletWallet's list no longer shows them. Each one counted toward the monthly limit.
+export interface CancelledCard {
   at: number;
   kerb: string;
   name: string;
-  action: "made" | "remade" | "cancelled";
-  // The button the member tapped.
-  platform?: "apple" | "google";
-  // The exec whose action cancelled the card.
+  action: "cancelled";
+  // The exec who removed the signup. Without it, the member's new card replaced this one.
   by?: string;
 }
 
 const LOG_SIZE = 300;
 
-// A failed write only loses a log line, so it never stops the card itself.
-async function logWallet(event: WalletEvent) {
-  await pipeline([["LPUSH", keys.walletLog, JSON.stringify(event)], ["LTRIM", keys.walletLog, 0, LOG_SIZE - 1]]).catch(() => undefined);
+// A failed write only loses a log line, so it never stops the card change itself.
+async function logCancel(card: Omit<CancelledCard, "at" | "action">) {
+  const row: CancelledCard = { at: Date.now(), action: "cancelled", ...card };
+  await pipeline([["LPUSH", keys.walletLog, JSON.stringify(row)], ["LTRIM", keys.walletLog, 0, LOG_SIZE - 1]]).catch(() => undefined);
 }
 
-export async function walletLog(): Promise<WalletEvent[]> {
+export async function cancelledCards(): Promise<CancelledCard[]> {
   const rows = await redis<string[]>("LRANGE", keys.walletLog, 0, LOG_SIZE - 1);
-  return rows.map((row) => JSON.parse(row) as WalletEvent);
+  // The list once also held made cards. WalletWallet's own list covers those now.
+  return rows.map((row) => JSON.parse(row) as CancelledCard).filter((row) => row.action === "cancelled");
 }
 
 // Cancels a member's card because an exec removed their signup.
 export async function cancelMemberPass(member: Member, by: string) {
   if (!member.wallet) return;
   await revokePass(member.wallet.serial);
-  await logWallet({ at: Date.now(), kerb: member.kerb, name: member.name, action: "cancelled", by });
+  await logCancel({ kerb: member.kerb, name: member.name, by });
 }
 
 interface MemberPass {
@@ -145,7 +174,7 @@ async function storedPass(config: YearConfig, member: Member): Promise<MemberPas
 
 // The member's card, made on first use. Cards made before the Apple and Google buttons existed
 // lack the stored Apple file, so they are made again and the old card is cancelled.
-export async function memberPass(config: YearConfig, member: Member, siteOrigin: string, platform: "apple" | "google"): Promise<MemberPass> {
+export async function memberPass(config: YearConfig, member: Member, siteOrigin: string): Promise<MemberPass> {
   const stored = await storedPass(config, member);
   if (stored) return stored;
   if (!(await walletAvailable())) throw new MembershipError("Wallet cards are unavailable right now. Please try again later.", 503);
@@ -160,8 +189,7 @@ export async function memberPass(config: YearConfig, member: Member, siteOrigin:
     const made = await createPass(config, current, siteOrigin);
     await redis("SET", keys.walletPass(config.year, member.kerb), made.applePass);
     await updateMember(config.year, member.kerb, (m) => ({ ...m, wallet: made.wallet }));
-    if (old) await revokePass(old.serial).catch(() => undefined);
-    await logWallet({ at: Date.now(), kerb: current.kerb, name: current.name, action: old ? "remade" : "made", platform });
+    if (old) await revokePass(old.serial).then(() => logCancel({ kerb: current.kerb, name: current.name }), () => undefined);
     return { apple: Buffer.from(made.applePass, "base64"), google: made.wallet.googleUrl };
   }, 25_000);
 }
