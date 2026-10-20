@@ -25,7 +25,7 @@ import type { Attendance, EventInfo, FormConfig, Member, PaymentMethod, YearConf
 import { checkInState, clashes, clashNote, CLOCK_TIME, type EventHours } from "@/lib/membership/event-times";
 import { priceFor } from "@/lib/membership/members";
 import { checkVenmo } from "@/lib/membership/venmo";
-import { revokePass } from "@/lib/membership/wallet";
+import { cancelMemberPass } from "@/lib/membership/wallet";
 
 const METHODS: PaymentMethod[] = ["venmo", "zelle", "cash"];
 
@@ -162,11 +162,11 @@ export async function markUnpaid(kerb: string): Promise<Result<Member>> {
 
 export async function removeSignup(kerb: string): Promise<Result<null>> {
   return attempt(async () => {
-    await requireExec();
+    const email = await requireExec();
     const config = await requireCurrentYear();
     const member = await getMember(config.year, kerb);
     if (!member) return null;
-    if (member.wallet) await revokePass(member.wallet.serial).catch(() => undefined);
+    await cancelMemberPass(member, email).catch(() => undefined);
     await deleteMember(config.year, kerb);
     if (member.type === "new" && member.status === "paid") await unmarkPaidEver(kerb);
     syncMembersLater(config.year);

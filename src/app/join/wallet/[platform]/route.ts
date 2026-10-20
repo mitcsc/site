@@ -36,7 +36,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
     if (!config || !member) {
       return link ? NextResponse.redirect(new URL("/join/pass?link=used", request.url), 303) : back(request, "missing");
     }
-    const pass = await memberPass(config, member, new URL(request.url).origin);
+    const pass = await memberPass(config, member, new URL(request.url).origin, platform);
     if (platform === "google") return NextResponse.redirect(pass.google, 303);
     return new NextResponse(new Uint8Array(pass.apple), {
       headers: {
