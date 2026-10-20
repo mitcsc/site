@@ -72,7 +72,7 @@ export default function CheckInDesk({ event, records: initialRecords, people: in
   function apply(result: CheckInResult) {
     if (result.kind === "unknown") return;
     setPeople((list) => list.map((p) => (p.kerb === result.person.kerb ? result.person : p)));
-    if (result.kind !== "unpaid") setRecords((list) => (list.some((r) => r.kerb === result.record.kerb) ? list : [...list, result.record]));
+    if (result.kind !== "unpaid") setRecords((list) => [...list.filter((r) => r.kerb !== result.record.kerb), result.record]);
   }
 
   const admit: Admit = async (kerb, mode) => {
@@ -161,11 +161,13 @@ export default function CheckInDesk({ event, records: initialRecords, people: in
 
 function PersonRow({ person: p, record, busy, admit, undo }: { person: Person; record: Attendance | null; busy: boolean; admit: Admit; undo: Undo }) {
   const unpaid = !record && !p.paid;
+  // Someone let in with "Check in anyway" who still owes.
+  const owes = !!record && !p.paid;
   const status = record
-    ? <CheckedInPill at={record.at} />
+    ? <><CheckedInPill at={record.at} />{owes && <span className="m-pill is-yellow">Not paid</span>}</>
     : p.paid ? <span className="m-pill is-green">Active</span> : <span className="m-pill is-yellow">Not paid</span>;
   return (
-    <div className={`d-person${unpaid ? " is-unpaid" : ""}`}>
+    <div className={`d-person${unpaid || owes ? " is-unpaid" : ""}`}>
       <div className="d-person-top">
         <div className="d-person-who">
           <span className="d-person-name">{p.name}</span>
@@ -179,6 +181,12 @@ function PersonRow({ person: p, record, busy, admit, undo }: { person: Person; r
         )}
         {!record && p.paid && <button type="button" className="m-btn is-light is-medium" disabled={busy} onClick={() => admit(p.kerb, "check-in")}>{busy ? "Checking in…" : "Check in"}</button>}
       </div>
+      {owes && (
+        <>
+          <p className="d-person-note" suppressHydrationWarning>{oweNote(p)}</p>
+          <button type="button" className="m-btn is-outline is-block d-person-btn" disabled={busy} onClick={() => admit(p.kerb, "confirm")}>Confirm {money(p.price)} received</button>
+        </>
+      )}
       {unpaid && (
         <>
           <p className="d-person-note" suppressHydrationWarning>{oweNote(p)}</p>
