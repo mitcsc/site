@@ -173,7 +173,9 @@ Only dig into the code if something is broken or they want a change.
   Exec scan the card's QR code at Check-In.
   WalletWallet's free plan makes 1,000 passes a month (creating or cancelling a card counts) and answers 429 past it.
   The site then saves the reset day (`wallet-paused` key), hides every Wallet option from members until then, and shows exec a banner.
-  Settings shows this month's count and a list of the latest 300 card changes (made, made again, cancelled), stored in the `wallet-log` key.
+  Settings shows this month's count and every card, read from WalletWallet's pass list (`GET /api/passes`, which does not count toward the limit).
+  Each card shows when it was made and whether it is in Apple or Google Wallet.
+  Cancelled cards drop off that list, so the site logs the latest 300 cancellations in the `wallet-log` key.
 - **Events**: each event gets its own Google Sheet with an "Attendance" tab. Check-in opens and closes on its own at the event hours.
   An event without hours is open on its date until midnight, or 12 hours after it was made if that is later.
   Check-in an exec opens by hand closes 12 hours later; then the event hours apply again (`OPEN_FOR_MS` in `src/lib/membership/event-times.ts`).

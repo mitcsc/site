@@ -293,6 +293,8 @@ button.d-aside-link:hover:not(:disabled), a.d-aside-link:hover { background: #ff
 .d-wallet-log .d-access-list > div { padding: 8px 0; }
 .d-wallet-log time { flex: none; font-variant-numeric: tabular-nums; }
 .d-log-who { display: flex; flex-direction: column; gap: 2px; }
+.d-wallet-log .is-faded { opacity: 0.55; }
+.d-dot { display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--green-text); vertical-align: middle; }
 .d-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
 .d-account-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; width: 100%; }
 .d-account-name { flex: 1; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
