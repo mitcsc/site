@@ -52,12 +52,15 @@ export default function Scanner({ eventId, eventName, onClose, onResult, admit, 
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
   const [mirrored, setMirrored] = useState(false);
+  // True right after confirming payment for someone already checked in.
+  const [confirmed, setConfirmed] = useState(false);
 
   // The camera loop lives across renders, so it reads the latest callback from a ref.
   const report = useRef(onResult);
   useEffect(() => { report.current = onResult; }, [onResult]);
   const show = useCallback((value: CheckInResult) => {
     setResult(value);
+    setConfirmed(false);
     if (value.kind !== "unknown") report.current(value);
     if (value.kind === "checked-in") navigator.vibrate?.(60);
   }, []);
@@ -109,12 +112,17 @@ export default function Scanner({ eventId, eventName, onClose, onResult, admit, 
     paused.current = false;
   }
 
+  // Someone who has not paid: before check-in, or let in anyway.
   async function act(mode: "confirm" | "anyway") {
-    if (result?.kind !== "unpaid") return;
+    if (!result || result.kind === "unknown" || result.person.paid) return;
+    const checkedIn = result.kind !== "unpaid";
     setBusy(true);
     const value = await admit(result.person.kerb, mode);
     setBusy(false);
-    if (value) show(value);
+    if (!value) return;
+    show(value);
+    // Confirming for someone already inside adds nothing to the sheet, so the note says what changed.
+    setConfirmed(checkedIn && mode === "confirm");
   }
 
   async function takeBack() {
@@ -144,13 +152,26 @@ export default function Scanner({ eventId, eventName, onClose, onResult, admit, 
             <p className="d-scan-message">{result.message}</p>
           ) : (
             <div className="d-scan-who">
-              {result.kind === "unpaid" ? <span className="m-pill is-yellow is-big">Not paid</span> : <CheckedInPill at={result.record.at} big />}
+              <span className="d-tags">
+                {result.kind !== "unpaid" && <CheckedInPill at={result.record.at} big />}
+                {!result.person.paid && <span className="m-pill is-yellow is-big">Not paid</span>}
+              </span>
               <span className="d-scan-name">{result.person.name}</span>
               <span className="d-tags"><span className="m-tag">{result.person.kerb}</span>{result.person.classYear && <span className="m-tag">{result.person.classYear}</span>}</span>
             </div>
           )}
           {result.kind === "checked-in" && <p className="d-scan-note">{result.count === 1 ? "1 person is here now." : `${result.count} people are here now.`}</p>}
-          {result.kind === "already" && <p className="d-scan-note">Already checked in by {shortEmail(result.record.by)}. Nothing was added to the sheet.</p>}
+          {result.kind === "already" && (
+            <p className="d-scan-note">
+              {confirmed ? `Confirmed ${money(result.person.price)} received. They were already checked in.` : `Already checked in by ${shortEmail(result.record.by)}. Nothing was added to the sheet.`}
+            </p>
+          )}
+          {result.kind !== "unknown" && result.kind !== "unpaid" && !result.person.paid && (
+            <>
+              <p className="d-scan-note">{oweNote(result.person)}</p>
+              <button type="button" className="m-btn is-outline is-block" disabled={busy} onClick={() => act("confirm")}>Confirm {money(result.person.price)} received</button>
+            </>
+          )}
           {result.kind === "unpaid" && (
             <>
               <p className="d-scan-note">{oweNote(result.person)}</p>

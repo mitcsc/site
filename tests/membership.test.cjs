@@ -427,6 +427,15 @@ test('the Venmo check confirms each payment once and only for the right amount',
   assert.ok(requests.redis - before.redis <= 10, `The check made ${requests.redis - before.redis} Redis requests, not one per handled email`);
 });
 
+test('a check-in made unpaid turns paid, and only an existing one', async () => {
+  const at = Date.now();
+  await store.checkIn('ev1', { kerb: 'jchen', name: 'Jamie Chen', classYear: '2028', paid: false, at, by: 'exec@mit.edu' });
+  assert.deepEqual(await store.markCheckInPaid('ev1', 'jchen'), { kerb: 'jchen', name: 'Jamie Chen', classYear: '2028', paid: true, at, by: 'exec@mit.edu' });
+  assert.equal((await store.getAttendance('ev1', 'jchen')).record.paid, true);
+  assert.equal(await store.markCheckInPaid('ev1', 'amy'), null, 'Nobody is checked in under that kerb');
+  assert.equal((await store.getAttendance('ev1', 'amy')).record, null);
+});
+
 test('two requests for the same new Wallet card make one card', async () => {
   process.env.WALLETWALLET_API_KEY = 'test-wallet-key';
   try {

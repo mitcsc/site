@@ -17,7 +17,7 @@ import { withLock } from "@/lib/membership/redis";
 import { attempt, type Result } from "@/lib/membership/result";
 import { readCardToken } from "@/lib/membership/signing";
 import {
-  attendanceCount, checkIn, claimMember, undoCheckIn, createEvent, eventsOn, deleteEvent, getAttendance, createYear, currentYear, deleteMember, getEvent, getMember, getYear, markPaidEver,
+  attendanceCount, checkIn, claimMember, undoCheckIn, createEvent, eventsOn, deleteEvent, getAttendance, createYear, currentYear, deleteMember, getEvent, getMember, getYear, markCheckInPaid, markPaidEver,
   requireCurrentYear, unmarkPaidEver, updateEvent, updateMember, updateYear,
 } from "@/lib/membership/store";
 import { syncEventLater, syncMembersLater, syncMembersNow } from "@/lib/membership/sync";
@@ -404,8 +404,10 @@ async function admit(event: EventInfo | null, kerb: string, mode: "check-in" | "
     return record ? { kind: "already", person: person(member), record, count } : { kind: "unpaid", person: person(member), count };
   }
   const result = await checkIn(event.id, { kerb, name: member.name, classYear: member.classYear, paid: member.status === "paid", at: Date.now(), by });
-  if (result.added) syncEventLater(event.id);
-  return { kind: result.added ? "checked-in" : "already", person: person(member), record: result.record, count: result.count };
+  // Someone let in unpaid who has paid since: their check-in turns paid too, so the sheet shows it.
+  const record = !result.added && member.status === "paid" && !result.record.paid ? (await markCheckInPaid(event.id, kerb)) ?? result.record : result.record;
+  if (result.added || record !== result.record) syncEventLater(event.id);
+  return { kind: result.added ? "checked-in" : "already", person: person(member), record, count: result.count };
 }
 
 export async function checkInPerson(eventId: string, kerb: string, mode: "check-in" | "confirm" | "anyway"): Promise<Result<CheckInResult>> {

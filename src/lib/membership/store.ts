@@ -149,6 +149,15 @@ export async function checkIn(eventId: string, record: Attendance) {
   return added === 1 ? { added: true as const, record, count } : { added: false as const, record: JSON.parse(stored) as Attendance, count };
 }
 
+// Marks a check-in paid, for someone let in unpaid who has paid since. Null when they are not checked in.
+export async function markCheckInPaid(eventId: string, kerb: string) {
+  const raw = await redis<string | null>("HGET", keys.attendance(eventId), kerb);
+  if (!raw) return null;
+  const record: Attendance = { ...(JSON.parse(raw) as Attendance), paid: true };
+  await redis("HSET", keys.attendance(eventId), kerb, JSON.stringify(record));
+  return record;
+}
+
 // Takes back a check-in, for example a tap on the wrong person. Returns false if they were not checked in.
 export async function undoCheckIn(eventId: string, kerb: string) {
   return (await redis<number>("HDEL", keys.attendance(eventId), kerb)) === 1;
