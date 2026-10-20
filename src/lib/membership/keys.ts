@@ -10,6 +10,7 @@ export const keys = {
   walletPass: (year: string, kerb: string) => `${PREFIX}:wallet-pass:${year}:${kerb}`,
   // The day WalletWallet's monthly limit resets, while new cards are paused. Expires on that day.
   walletPaused: `${PREFIX}:wallet-paused`,
+  walletLog: `${PREFIX}:wallet-log`,
   // An unused card link from an email. Deleted when the link is used.
   cardLink: (id: string) => `${PREFIX}:card-link:${id}`,
   // Everyone who paid on this site in any year. They get the returning price.

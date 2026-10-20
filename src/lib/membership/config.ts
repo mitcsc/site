@@ -121,6 +121,7 @@ const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", t
 const DAY_WITH_YEAR = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const TIME = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
 const STAMP = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: TIME_ZONE });
+const DAY_TIME = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
 const FULL_STAMP = new Intl.DateTimeFormat("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: TIME_ZONE });
 
 export function localDate(date: Date) {
@@ -138,6 +139,11 @@ export function formatTime(ms: number) {
 
 export function formatStamp(ms: number) {
   return STAMP.format(ms);
+}
+
+// "Oct 19, 9:22 PM".
+export function formatDayTime(ms: number) {
+  return DAY_TIME.format(ms);
 }
 
 // The full time for a tooltip, like "Wed, Oct 14, 2026, 9:22:07 AM".
